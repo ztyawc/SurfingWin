@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("SurfingWin Tray")]
 [assembly: AssemblyDescription("Portable Mihomo tray controller")]
-[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyVersion("1.1.2.0")]
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
 
 namespace SurfingWin.Tray
@@ -73,6 +73,7 @@ namespace SurfingWin.Tray
         private bool busy, refreshing, closing, pendingStart, errorTip;
         private FluentControlCenter center;
         private string operationError;
+        private int centerRequest;
         internal bool IsClosing { get { return closing; } }
         internal bool IsBusy { get { return busy || refreshing; } }
         internal FluentControlCenter Center { get { return center; } }
@@ -108,11 +109,18 @@ namespace SurfingWin.Tray
         internal void HandleTrayClick(MouseButtons button, Point point)
         {
             if (closing || button != MouseButtons.Right) return;
+            int request = ++centerRequest;
             if (center != null && (center.IsVisible || center.JustLostFocus)) { center.Dismiss(); return; }
-            ShowControlCenter(point, true);
+            // Let Explorer complete the notification-icon callback before activating
+            // a window; otherwise its final focus change can immediately hide it.
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(new Action(delegate
+            {
+                if (!closing && request == centerRequest) ShowControlCenter(point, true);
+            }), System.Windows.Threading.DispatcherPriority.ContextIdle);
         }
         internal void HandleDoubleClick()
         {
+            ++centerRequest;
             if (center != null) center.Dismiss();
             if (state.Status == CoreStatus.Ready) Open("panel");
         }

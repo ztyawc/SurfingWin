@@ -95,7 +95,7 @@ class TrayTests(unittest.TestCase):
         diagnostics = json.loads(results.read_text(encoding="utf-8-sig"))
         self.assertEqual(completed.returncode, 0, json.dumps(diagnostics, ensure_ascii=False, indent=2))
         self.assertTrue(diagnostics["success"], diagnostics)
-        self.assertGreaterEqual(len(diagnostics["passed"]), 21)
+        self.assertGreaterEqual(len(diagnostics["passed"]), 23)
         print("\n  Tray scenarios: " + "; ".join(diagnostics["passed"]))
         for reason in diagnostics.get("skipped", []):
             print("  Skipped native scenario: " + reason)

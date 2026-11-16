@@ -164,7 +164,18 @@ namespace SurfingWin.Tray
             surface.SetResourceReference(Border.BackgroundProperty, "Window"); surface.SetResourceReference(Border.BorderBrushProperty, "Line");
             Content = surface; ApplyTheme(null);
             KeyDown += delegate(object sender, KeyEventArgs e) { if (e.Key == Key.Escape) { Dismiss(); e.Handled = true; } };
-            Deactivated += delegate { if (IsVisible) focusLostAt = DateTime.UtcNow; Dismiss(); };
+            Activated += delegate { focusLostAt = DateTime.MinValue; };
+            Deactivated += delegate
+            {
+                if (!IsVisible) return;
+                focusLostAt = DateTime.UtcNow;
+                // Activation can bounce while the shell finishes a tray click.
+                // Dismiss only if the popup is still inactive on the next turn.
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (!disposing && IsVisible && !IsActive) Dismiss();
+                }), DispatcherPriority.Background);
+            };
             Closing += delegate(object sender, CancelEventArgs e) { if (!disposing) { e.Cancel = true; Dismiss(); } };
             SourceInitialized += delegate
             {
@@ -225,12 +236,13 @@ namespace SurfingWin.Tray
         {
             if (disposing) return;
             anchor = point; ApplyTheme(appearanceOverride);
-            Opacity = animate && AnimationEnabled ? 0 : 1;
+            BeginAnimation(OpacityProperty, null);
+            bool fade = animate && AnimationEnabled;
+            Opacity = fade ? 0 : 1;
             if (!IsVisible) Show();
             PositionNearAnchor(); Activate();
-            if (animate && AnimationEnabled)
-                BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(140)) { FillBehavior = FillBehavior.Stop });
-            Opacity = 1;
+            if (fade)
+                BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(140)));
             if (Keyboard.FocusedElement == null || !IsKeyboardFocusWithin) buttons["power"].Focus();
         }
         internal void Dismiss()

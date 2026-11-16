@@ -339,6 +339,7 @@ namespace SurfingWin.Tray.Tests
                         Check(icon.ContextMenuStrip == null && icon.ContextMenu == null, "legacy tray menu remains attached");
                         typeof(NotifyIcon).GetMethod("OnMouseClick", BindingFlags.Instance | BindingFlags.NonPublic)
                             .Invoke(icon, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
+                        WaitFor(() => context.Center != null && context.Center.IsVisible);
                         var center = context.Center;
                         Check(center != null && center.IsVisible, "actual right-click event did not open Fluent");
                         Click(center.Item("power")); WaitFor(() => !context.IsBusy);
@@ -448,7 +449,7 @@ namespace SurfingWin.Tray.Tests
                         center.Dismiss();
                     }
                 });
-                UiTest("right click opens Fluent immediately while left click stays quiet and double click opens Zashboard", delegate
+                UiTest("right click opens Fluent once while left click stays quiet and double click cancels a queued popup", delegate
                 {
                     var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
                     using (var context = new TrayContext(backend, null, false, false, false))
@@ -456,10 +457,12 @@ namespace SurfingWin.Tray.Tests
                         Pump(context.RefreshAsync());
                         context.HandleTrayClick(MouseButtons.Left, new Point(400, 500)); DelayUi(SystemInformation.DoubleClickTime + 30);
                         Check(context.Center == null, "left click unexpectedly opened Fluent");
-                        context.HandleDoubleClick(); DelayUi(30);
+                        context.HandleTrayClick(MouseButtons.Right, new Point(400, 500));
+                        Check(context.Center == null, "popup activated inside the tray callback");
+                        context.HandleDoubleClick(); DelayUi(80);
                         Check(context.Center == null && backend.Opened.SequenceEqual(new[] { "panel" }), "double click also opened popup");
                         context.HandleTrayClick(MouseButtons.Right, new Point(400, 500));
-                        Check(context.Center != null && context.Center.IsVisible, "right click did not open Fluent immediately");
+                        WaitFor(() => context.Center != null && context.Center.IsVisible);
                         var center = context.Center;
                         context.HandleTrayClick(MouseButtons.Right, new Point(400, 500)); Check(!center.IsVisible, "second right click did not dismiss Fluent");
                         context.ShowControlCenter(new Point(400, 500), false);
@@ -475,9 +478,47 @@ namespace SurfingWin.Tray.Tests
                             Check(!center.IsVisible, "tray click reopened the popup immediately after losing focus"); outside.Close();
                         }
                         DelayUi(220); context.HandleTrayClick(MouseButtons.Right, new Point(400, 500));
-                        Check(center.IsVisible, "right click could not reopen Fluent after dismissal");
+                        WaitFor(() => center.IsVisible);
                         context.HandleDoubleClick(); Check(!center.IsVisible && backend.Opened.Count == 2, "double click did not dismiss Fluent and open Zashboard");
                         Check(!context.IsClosing && backend.State.ProcessExists, "outside focus stopped core");
+                    }
+                });
+                UiTest("right-click popup survives the shell finishing its focus handling", delegate
+                {
+                    var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
+                    using (var context = new TrayContext(backend, null, false, false, false))
+                    using (var shell = new Form { Width = 100, Height = 100, ShowInTaskbar = false })
+                    {
+                        Pump(context.RefreshAsync()); shell.Show(); shell.Activate(); Application.DoEvents();
+                        context.HandleTrayClick(MouseButtons.Right, new Point(500, 600));
+                        // Explorer can finish handling mouse-up and reclaim focus before
+                        // returning to the notification icon's own message queue.
+                        shell.Activate(); DelayUi(300);
+                        var center = context.Center;
+                        Check(center != null && center.IsVisible && center.IsActive, "popup flashed and disappeared while the shell completed the right click");
+                        // A short focus bounce must not dismiss a reactivated window.
+                        shell.Activate(); center.Activate(); DelayUi(80);
+                        Check(center.IsVisible && center.IsActive, "a stale deactivation hid the active popup");
+                        shell.Activate(); WaitFor(() => !center.IsVisible);
+                        Check(!context.IsClosing && backend.State.ProcessExists, "outside focus affected tray/core lifetime");
+                    }
+                });
+                UiTest("opening fade stays transparent until the first animation frame and remains opaque afterwards", delegate
+                {
+                    var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
+                    using (var context = new TrayContext(backend, null, false, false, false))
+                    {
+                        Pump(context.RefreshAsync()); context.ShowControlCenter(new Point(600, 700), true);
+                        var center = context.Center;
+                        if (center.AnimationEnabled)
+                        {
+                            Check((double)center.GetAnimationBaseValue(System.Windows.UIElement.OpacityProperty) == 0,
+                                "fade resets opacity to one before the first frame");
+                            WaitFor(() => center.Opacity > 0);
+                        }
+                        DelayUi(220); Check(center.IsVisible && center.Opacity > .99, "popup faded back out after opening");
+                        center.Dismiss(); context.ShowControlCenter(new Point(600, 700), false);
+                        Check(center.IsVisible && center.Opacity == 1, "a cancelled fade leaked into a later nonanimated opening");
                     }
                 });
                 UiTest("Fluent light and dark surfaces render at 100 125 150 and 200 percent", delegate
