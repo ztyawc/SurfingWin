@@ -9,7 +9,17 @@ permissions:
   contents: write
 
 jobs:
+  test-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Test Windows scripts and native tray
+        run: python -B -m unittest discover -s tests -v
+
   build:
+    needs: test-windows
     runs-on: ubuntu-latest
 
     steps:
@@ -24,6 +34,9 @@ jobs:
       - name: Get Short Commit Hash
         shell: bash
         run: echo "SHORT_HASH=${GITHUB_SHA:0:7}" >> $GITHUB_ENV
+
+      - name: Test release packaging
+        run: python3 -B -m unittest discover -s tests -v
 
       - name: Run build.sh
         run: sh build.sh
@@ -46,6 +59,6 @@ jobs:
             自动同步分支最新代码以进行最新版本构建
             Release Timestamp: ${{ env.TIMESTAMP }}
 
-            [![Download ${{ env.SHORT_HASH }}](https://img.shields.io/badge/Version%20Download-${{ env.SHORT_HASH }}-00b56a?style=flat-square&logo=git&logoColor=white)](https://github.com/GitMetaio/SurfingWin/releases/download/Windows/Surfing_windows-amd64_${{ env.SHORT_HASH }}.zip)
+            [![Download ${{ env.SHORT_HASH }}](https://img.shields.io/badge/Version%20Download-${{ env.SHORT_HASH }}-00b56a?style=flat-square&logo=git&logoColor=white)](https://github.com/${{ github.repository }}/releases/download/Windows/Surfing_windows-amd64_${{ env.SHORT_HASH }}.zip)
 
-            **Full:** [Commits](https://github.com/GitMetaio/SurfingWin/commits/main)
+            **Full:** [Commits](https://github.com/${{ github.repository }}/commits/main)

@@ -1,1 +1,1 @@
-@cd /d "%~dp0" & start "" "scripts\Surfing.start.vbs" & exit
+@cd /d "%~dp0" & start "" "scripts\Surfing.tray.vbs" /start & exit
