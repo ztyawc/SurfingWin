@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +20,17 @@ def windows_path(path):
     return subprocess.check_output([WSLPATH, "-w", str(path)], text=True).strip()
 
 
+class StartupPolicyTests(unittest.TestCase):
+    def test_startup_can_run_offline_and_retry_failed_launches(self):
+        task = ET.parse(PROJECT_ROOT / "scripts" / "Surfing.startup.xml")
+        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+        settings = task.find("t:Settings", ns)
+        self.assertEqual(settings.findtext("t:StartWhenAvailable", namespaces=ns), "true")
+        self.assertEqual(settings.findtext("t:RunOnlyIfNetworkAvailable", namespaces=ns), "false")
+        self.assertEqual(settings.findtext("t:RestartOnFailure/t:Interval", namespaces=ns), "PT1M")
+        self.assertEqual(settings.findtext("t:RestartOnFailure/t:Count", namespaces=ns), "3")
+
+
 @unittest.skipUnless(CSCRIPT and (os.name == "nt" or WSLPATH), "Windows Script Host required")
 class WindowsScriptTests(unittest.TestCase):
     @classmethod
@@ -29,7 +41,7 @@ class WindowsScriptTests(unittest.TestCase):
         (cls.fixture / "scripts").mkdir(parents=True)
         (cls.fixture / "bin").mkdir()
         (cls.fixture / "config" / "log").mkdir(parents=True)
-        for name in ("Surfing.start.vbs", "Surfing.task.start.vbs", "Surfing.task.stop.vbs", "Surfing.startup.xml"):
+        for name in ("Surfing.start.vbs", "Surfing.task.start.vbs", "Surfing.task.stop.vbs", "Surfing.startup.xml", "Surfing.delay.vbs", "Surfing.tray.vbs"):
             shutil.copyfile(PROJECT_ROOT / "scripts" / name, cls.fixture / "scripts" / name)
         cls.harness = Path(cls.temp.name) / "harness.vbs"
         source = (PROJECT_ROOT / "tests" / "windows_script_harness.vbs").read_text(encoding="utf-8")
@@ -64,6 +76,18 @@ class WindowsScriptTests(unittest.TestCase):
         for scenario, script, expected_exit in cases:
             with self.subTest(scenario=scenario):
                 self.run_scenario(scenario, script, expected_exit)
+
+    def test_delayed_startup_waits_for_launcher_and_exits_normally(self):
+        for scenario, expected in (("delay_ok", 0), ("delay_launcher_fail", 7), ("delay_start_fail", 1)):
+            with self.subTest(scenario=scenario):
+                self.run_scenario(scenario, "Surfing.delay.vbs", expected)
+        launcher = self.fixture / "scripts" / "Surfing.tray.vbs"
+        hidden = launcher.with_suffix(".fixture-hidden")
+        launcher.rename(hidden)
+        try:
+            self.run_scenario("delay_missing", "Surfing.delay.vbs", 2)
+        finally:
+            hidden.rename(launcher)
 
     def test_startup_command_executes_with_special_paths(self):
         windows_dir = Path(CSCRIPT).parent.parent

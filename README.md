@@ -105,6 +105,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-tray.ps1
 
 双击 **开机自启.bat**，并在 UAC 提示中允许管理员权限。重复运行会更新已有任务的脚本路径；关闭时双击 **关闭自启.bat**，脚本会检查删除结果。
 
+任务在用户登录约 10 秒后启动托盘和内核，不要求网络已连接。启动脚本异常退出时，每分钟重试一次，最多三次；这些重试不包含启动器已正常退出后的内核故障。启动过程记录在 `config/log/startup.log`，内核校验和运行问题可结合托盘日志排查。
+
 如需手动配置：
 
 1. 打开 Windows **任务计划程序**

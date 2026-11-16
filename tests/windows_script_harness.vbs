@@ -6,7 +6,7 @@ Option Explicit
 Dim MockScenario, MockScript, MockExpectedExit, MockNativeFSO, MockNativeShell
 Dim MockScriptDir, MockBaseDir, MockSystemRoot, MockSource, MockReader, TestHost
 Dim MockRunCount, MockShellCount, MockTaskQueries, MockWmiQueries, MockLastMessage
-Dim MockTempXml, MockLogPath
+Dim MockTempXml, MockLogPath, MockSleepCount
 MockScenario = WScript.Arguments(0)
 MockScript = WScript.Arguments(1)
 MockExpectedExit = CInt(WScript.Arguments(2))
@@ -21,6 +21,7 @@ MockTaskQueries = 0
 MockWmiQueries = 0
 MockLastMessage = ""
 MockTempXml = ""
+MockSleepCount = 0
 Set TestHost = New MockHost
 Set MockReader = MockNativeFSO.OpenTextFile(MockScript, 1, False, -1)
 MockSource = MockReader.ReadAll
@@ -78,6 +79,13 @@ Sub MockVerifyAndQuit(code)
         Else
             MockCheck InStr(MockLastMessage, "已删除") = 0, "false deletion success"
         End If
+    ElseIf Left(MockScenario, 6) = "delay_" Then
+        MockCheck MockWmiQueries = 0, "startup must not inspect or terminate WMI processes"
+        If MockScenario = "delay_missing" Then
+            MockCheck MockRunCount = 0 And MockSleepCount = 0, "missing launcher should fail before waiting or running"
+        Else
+            MockCheck MockRunCount = 1 And MockSleepCount = 1, "launcher must run exactly once after the delay"
+        End If
     ElseIf MockScenario = "startup_ok" Then
         MockCheck MockShellCount = 1, "core was not launched"
         MockCheck MockWmiQueries = 2, "startup was not checked"
@@ -109,6 +117,7 @@ Function MockCreateObject(progId)
 End Function
 
 Function MockGetObject(path)
+    MockCheck Left(MockScenario, 6) <> "delay_", "delayed startup must not depend on WMI"
     Set MockGetObject = New MockWmi
 End Function
 
@@ -120,6 +129,10 @@ Class MockHost
         Set Arguments = New MockArguments
     End Property
     Public Sub Sleep(milliseconds)
+        If Left(MockScenario, 6) = "delay_" Then
+            MockSleepCount = MockSleepCount + 1
+            MockCheck milliseconds = 10000, "startup delay changed unexpectedly"
+        End If
     End Sub
     Public Sub Quit(code)
         MockVerifyAndQuit code
@@ -169,6 +182,13 @@ Class MockShell
     Public Function Run(command, windowStyle, wait)
         MockRunCount = MockRunCount + 1
         Run = 0
+        If Left(MockScenario, 6) = "delay_" Then
+            MockCheck command = MockQuote(MockSystemRoot & "\System32\wscript.exe") & " //B //NoLogo " & MockQuote(MockScriptDir & "\Surfing.tray.vbs") & " /start", "wrong delayed startup command or quoting"
+            MockCheck windowStyle = 0 And wait, "launcher must be hidden and allowed to finish"
+            If MockScenario = "delay_start_fail" Then Err.Raise &H80070002, "Mock", "Cannot start script host"
+            If MockScenario = "delay_launcher_fail" Then Run = 7
+            Exit Function
+        End If
         If InStr(command, " /Create ") > 0 Then
             Dim regex, matches, document
             Set regex = New RegExp
@@ -182,6 +202,10 @@ Class MockShell
             MockCheck document.selectSingleNode("//t:Arguments").text = MockQuote(MockScriptDir & "\Surfing.delay.vbs"), "wrong task arguments"
             MockCheck document.selectSingleNode("//t:WorkingDirectory").text = MockScriptDir, "wrong task working directory"
             MockCheck document.selectSingleNode("//t:Command").text = MockSystemRoot & "\System32\wscript.exe", "wrong task executable"
+            MockCheck document.selectSingleNode("//t:StartWhenAvailable").text = "true", "wrong missed-schedule policy"
+            MockCheck document.selectSingleNode("//t:RunOnlyIfNetworkAvailable").text = "false", "startup still depends on network availability"
+            MockCheck document.selectSingleNode("//t:RestartOnFailure/t:Interval").text = "PT1M", "wrong startup retry interval"
+            MockCheck document.selectSingleNode("//t:RestartOnFailure/t:Count").text = "3", "wrong startup retry count"
             MockCheck InStr(document.xml, "&amp;") > 0, "path ampersand was not XML-escaped"
             MockCheck Right(command, 3) = " /F", "existing tasks would not be updated"
             If MockScenario = "enable_create_fail" Then Run = 5
