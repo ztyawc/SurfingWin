@@ -63,7 +63,7 @@ class TrayTests(unittest.TestCase):
         if result.returncode:
             raise AssertionError((result.stdout + result.stderr).decode("utf-8", errors="replace"))
 
-    def test_native_core_api_menu_and_instance_lifecycle(self):
+    def test_native_core_api_control_center_and_instance_lifecycle(self):
         rebuilt = self.folder / "RebuiltTray.exe"
         result = subprocess.run(
             [POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
@@ -82,7 +82,7 @@ class TrayTests(unittest.TestCase):
             hasher.update((name + "\n").encode())
             hasher.update(data)
         results = self.folder / "results.json"
-        preview = self.folder / "menu.png"
+        preview = self.folder / "control-center.png"
         packaged = self.folder / "PackagedTray.exe"
         shutil.copyfile(PROJECT_ROOT / "bin" / "SurfingTray.exe", packaged)
         completed = subprocess.run(
@@ -90,7 +90,8 @@ class TrayTests(unittest.TestCase):
              windows_path(packaged), hasher.hexdigest(),
              windows_path(results), windows_path(preview)], capture_output=True, timeout=150,
         )
-        self.assertTrue(results.is_file(), "Native harness produced no diagnostics")
+        self.assertTrue(results.is_file(), "Native harness produced no diagnostics (exit " + str(completed.returncode) + "): "
+                        + (completed.stdout + completed.stderr).decode("utf-8", errors="replace"))
         diagnostics = json.loads(results.read_text(encoding="utf-8-sig"))
         self.assertEqual(completed.returncode, 0, json.dumps(diagnostics, ensure_ascii=False, indent=2))
         self.assertTrue(diagnostics["success"], diagnostics)

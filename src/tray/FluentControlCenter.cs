@@ -26,7 +26,7 @@ namespace SurfingWin.Tray
     {
         private readonly Dictionary<string, Button> buttons = new Dictionary<string, Button>();
         private readonly TextBlock heading, version, badgeText, tunText, detail, feedback;
-        private readonly Border surface, badge;
+        private readonly Border surface, badge, exitOptions;
         private readonly System.Windows.Shapes.Ellipse tunDot;
         private HwndSource source;
         private bool disposing, positioning, dark, highContrast;
@@ -35,7 +35,6 @@ namespace SurfingWin.Tray
         private Drawing.Point anchor;
         internal event Action<string> ActionRequested;
         internal event Action<string> ModeRequested;
-        internal event Action<Drawing.Point> MenuRequested;
         internal bool DarkAppearance { get { return dark; } }
         internal bool JustLostFocus { get { return (DateTime.UtcNow - focusLostAt).TotalMilliseconds < 200; } }
         internal string Heading { get { return heading.Text; } }
@@ -47,61 +46,61 @@ namespace SurfingWin.Tray
         internal FluentControlCenter()
         {
             Title = "SurfingWin 控制中心";
-            Width = 400; SizeToContent = SizeToContent.Height;
+            Width = 336; SizeToContent = SizeToContent.Height;
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
             AllowsTransparency = true; Background = Brushes.Transparent;
             ShowInTaskbar = false; Topmost = true;
             WindowStartupLocation = WindowStartupLocation.Manual;
-            FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI"); FontSize = 14;
+            FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI"); FontSize = 13;
             UseLayoutRounding = true; SnapsToDevicePixels = true;
             Resources = (ResourceDictionary)XamlReader.Parse(Styles);
             ApplyTheme(null);
             SetResourceReference(ForegroundProperty, "Text");
             AutomationProperties.SetName(this, "SurfingWin 快捷控制中心");
 
-            var content = new StackPanel { Margin = new Thickness(20) };
-            var header = new Grid { Margin = new Thickness(0, 0, 0, 20) };
+            var content = new StackPanel { Margin = new Thickness(14) };
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
             header.ColumnDefinitions.Add(new ColumnDefinition());
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var brand = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            var logoGlyph = new FluentGlyph("wave") { Width = 23, Height = 23 };
+            var logoGlyph = new FluentGlyph("wave") { Width = 20, Height = 20 };
             logoGlyph.SetResourceReference(FluentGlyph.InkProperty, "OnAccent");
-            var logo = new Border { Width = 36, Height = 36, CornerRadius = new CornerRadius(11), Margin = new Thickness(0, 0, 10, 0), Child = logoGlyph };
+            var logo = new Border { Width = 30, Height = 30, CornerRadius = new CornerRadius(9), Margin = new Thickness(0, 0, 8, 0), Child = logoGlyph };
             logo.SetResourceReference(Border.BackgroundProperty, "Accent"); brand.Children.Add(logo);
             var name = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            name.Children.Add(Text("SurfingWin", 16, "Text", true)); name.Children.Add(Text("快捷控制中心", 12, "Muted"));
+            name.Children.Add(Text("SurfingWin", 14, "Text", true)); name.Children.Add(Text("快捷控制中心", 11, "Muted"));
             brand.Children.Add(name); header.Children.Add(brand);
             var headerActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             badgeText = Text("正在检查", 11, "Muted");
-            badge = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 4, 8, 4),
+            badge = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 3, 6, 3),
                 VerticalAlignment = VerticalAlignment.Center, Child = badgeText };
             headerActions.Children.Add(badge);
-            var more = MakeButton("more", new FluentGlyph("more"), "Quiet", "更多操作与退出选项");
-            more.Width = 28; more.Height = 32; more.Padding = new Thickness(4); more.Margin = new Thickness(4, 0, -8, 0);
+            var more = MakeButton("more", new FluentGlyph("more"), "Quiet", "展开或收起退出选项");
+            more.Width = 28; more.Height = 28; more.Padding = new Thickness(4); more.Margin = new Thickness(2, 0, -6, 0);
             more.Click += delegate
             {
-                var point = more.PointToScreen(new Point(more.ActualWidth, more.ActualHeight));
-                if (MenuRequested != null) MenuRequested(new Drawing.Point((int)point.X, (int)point.Y));
+                exitOptions.Visibility = exitOptions.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+                Dispatcher.BeginInvoke(new Action(PositionNearAnchor), DispatcherPriority.Loaded);
             };
             headerActions.Children.Add(more); Grid.SetColumn(headerActions, 1); header.Children.Add(headerActions);
             content.Children.Add(header);
 
             var hero = new Grid(); hero.ColumnDefinitions.Add(new ColumnDefinition());
             hero.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-            heading = Text("正在检查…", 21, "Text", true); version = Text("正在读取本项目内核状态", 12, "Muted");
-            version.TextWrapping = TextWrapping.Wrap; version.Margin = new Thickness(0, 4, 0, 0);
+            var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+            heading = Text("正在检查…", 18, "Text", true); version = Text("正在读取本项目内核状态", 11, "Muted");
+            version.TextWrapping = TextWrapping.Wrap; version.Margin = new Thickness(0, 3, 0, 0);
             titles.Children.Add(heading); titles.Children.Add(version); hero.Children.Add(titles);
-            var powerGlyph = new FluentGlyph("power") { Width = 24, Height = 24 };
+            var powerGlyph = new FluentGlyph("power") { Width = 21, Height = 21 };
             powerGlyph.SetResourceReference(FluentGlyph.InkProperty, "OnAccent");
             var power = MakeButton("power", powerGlyph, "Power", "启动代理");
-            power.Width = 52; power.Height = 52; power.Margin = new Thickness(0); Grid.SetColumn(power, 1); hero.Children.Add(power);
+            power.Width = 44; power.Height = 44; power.Padding = new Thickness(9); power.Margin = new Thickness(0); Grid.SetColumn(power, 1); hero.Children.Add(power);
             power.Click += delegate { Request(power.Tag as string); };
             var heroBorder = new Border { CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
-                Padding = new Thickness(18), Margin = new Thickness(0, 0, 0, 18), Child = hero };
+                Padding = new Thickness(12), Margin = new Thickness(0, 0, 0, 12), Child = hero };
             heroBorder.SetResourceReference(Border.BackgroundProperty, "Inner"); heroBorder.SetResourceReference(Border.BorderBrushProperty, "Line");
             content.Children.Add(heroBorder);
-            var modeLabel = Text("代理模式", 12, "Muted"); modeLabel.Margin = new Thickness(0, 0, 0, 8); content.Children.Add(modeLabel);
+            var modeLabel = Text("代理模式", 11, "Muted"); modeLabel.Margin = new Thickness(0, 0, 0, 6); content.Children.Add(modeLabel);
             var segment = new Grid(); int column = 0;
             foreach (string mode in new[] { "rule", "global", "direct" })
             {
@@ -109,23 +108,23 @@ namespace SurfingWin.Tray
                 string captured = mode;
                 var button = MakeButton("mode-" + mode, new TextBlock { Text = TrayContext.ModeName(mode), HorizontalAlignment = HorizontalAlignment.Center },
                     "Quiet", "切换到" + TrayContext.ModeName(mode) + "模式");
-                button.Height = 36; button.Padding = new Thickness(6, 8, 6, 8); button.Margin = new Thickness(2, 0, 2, 0);
+                button.Height = 32; button.Padding = new Thickness(6, 5, 6, 5); button.Margin = new Thickness(2, 0, 2, 0);
                 button.Click += delegate { if (ModeRequested != null) ModeRequested(captured); };
                 Grid.SetColumn(button, column++); segment.Children.Add(button);
             }
-            var segments = new Border { CornerRadius = new CornerRadius(9), Padding = new Thickness(2, 4, 2, 4), Child = segment };
+            var segments = new Border { CornerRadius = new CornerRadius(9), Padding = new Thickness(2), Child = segment };
             segments.SetResourceReference(Border.BackgroundProperty, "Segment"); content.Children.Add(segments);
 
-            var tun = new Grid { Margin = new Thickness(0, 16, 0, 16) };
+            var tun = new Grid { Margin = new Thickness(0, 10, 0, 10) };
             tun.ColumnDefinitions.Add(new ColumnDefinition()); tun.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             tun.Children.Add(Text("TUN 状态", 12, "Muted"));
             var tunValue = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             tunDot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-            tunText = Text("—", 14, "Text"); tunValue.Children.Add(tunDot); tunValue.Children.Add(tunText);
+            tunText = Text("—", 12, "Text"); tunValue.Children.Add(tunDot); tunValue.Children.Add(tunText);
             AutomationProperties.SetName(tunValue, "TUN 状态，仅显示；开关可在 Zashboard 面板中操作");
             Grid.SetColumn(tunValue, 1); tun.Children.Add(tunValue); content.Children.Add(tun);
             detail = Text("", 12, "Warning"); detail.TextWrapping = TextWrapping.Wrap; detail.Visibility = Visibility.Collapsed;
-            detail.Margin = new Thickness(0, 0, 0, 12); AutomationProperties.SetLiveSetting(detail, AutomationLiveSetting.Polite);
+            detail.Margin = new Thickness(0, 0, 0, 8); AutomationProperties.SetLiveSetting(detail, AutomationLiveSetting.Polite);
             content.Children.Add(detail);
             var panelContent = new Grid(); panelContent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             panelContent.ColumnDefinitions.Add(new ColumnDefinition()); panelContent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -134,8 +133,8 @@ namespace SurfingWin.Tray
             Grid.SetColumn(panelText, 1); panelContent.Children.Add(panelText);
             var arrow = new FluentGlyph("arrow") { Margin = new Thickness(8, 0, 0, 0) }; Grid.SetColumn(arrow, 2); panelContent.Children.Add(arrow);
             var panel = MakeButton("panel", panelContent, "Primary", "打开 Zashboard 面板");
-            panel.Click += delegate { Request("panel"); }; panel.MinHeight = 44; content.Children.Add(panel);
-            var links = new Grid { Margin = new Thickness(0, 10, 0, 0) };
+            panel.Click += delegate { Request("panel"); }; panel.MinHeight = 38; content.Children.Add(panel);
+            var links = new Grid { Margin = new Thickness(0, 6, 0, 0) };
             string[] ids = { "config", "logs", "restart" }, labels = { "配置", "日志", "重启" };
             for (int i = 0; i < ids.Length; i++)
             {
@@ -144,15 +143,24 @@ namespace SurfingWin.Tray
                 linkContent.Children.Add(new FluentGlyph(captured) { Width = 16, Height = 16, Margin = new Thickness(0, 0, 6, 0) });
                 linkContent.Children.Add(new TextBlock { Text = labels[i], VerticalAlignment = VerticalAlignment.Center });
                 var link = MakeButton(captured, linkContent, "Quiet", i == 0 ? "编辑配置文件" : i == 1 ? "打开日志目录" : "重启本项目内核");
-                link.Height = 40; link.FontSize = 12; link.Click += delegate { Request(captured); };
+                link.Height = 32; link.FontSize = 12; link.Click += delegate { Request(captured); };
                 Grid.SetColumn(link, i); links.Children.Add(link);
             }
             content.Children.Add(links);
-            feedback = Text("运行状态不代表外网连通性", 11, "Muted"); feedback.Margin = new Thickness(0, 10, 0, 0);
+            feedback = Text("运行状态不代表外网连通性", 11, "Muted"); feedback.Margin = new Thickness(0, 6, 0, 0);
             content.Children.Add(feedback);
+            var exits = new Grid();
+            exits.ColumnDefinitions.Add(new ColumnDefinition()); exits.ColumnDefinitions.Add(new ColumnDefinition());
+            var exitTray = MakeButton("exit-tray", "退出托盘", "Quiet", "退出托盘，保持代理运行");
+            exitTray.FontSize = 12; exitTray.Click += delegate { Request("exit-tray"); }; exits.Children.Add(exitTray);
+            var exitStop = MakeButton("exit-stop", "停止并退出", "Quiet", "停止代理并退出");
+            exitStop.FontSize = 12; exitStop.Click += delegate { Request("exit-stop"); }; Grid.SetColumn(exitStop, 1); exits.Children.Add(exitStop);
+            exitOptions = new Border { Child = exits, BorderThickness = new Thickness(0, 1, 0, 0),
+                Padding = new Thickness(0, 5, 0, 0), Margin = new Thickness(0, 8, 0, 0), Visibility = Visibility.Collapsed };
+            exitOptions.SetResourceReference(Border.BorderBrushProperty, "Line"); content.Children.Add(exitOptions);
             var scroll = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, CanContentScroll = false, Focusable = false };
-            surface = new Border { Margin = new Thickness(16), CornerRadius = new CornerRadius(18), BorderThickness = new Thickness(1), Child = scroll };
+            surface = new Border { Margin = new Thickness(12), CornerRadius = new CornerRadius(14), BorderThickness = new Thickness(1), Child = scroll };
             surface.SetResourceReference(Border.BackgroundProperty, "Window"); surface.SetResourceReference(Border.BorderBrushProperty, "Line");
             Content = surface; ApplyTheme(null);
             KeyDown += delegate(object sender, KeyEventArgs e) { if (e.Key == Key.Escape) { Dismiss(); e.Handled = true; } };
@@ -175,7 +183,7 @@ namespace SurfingWin.Tray
         private Button MakeButton(string id, object content, string style, string label)
         {
             var button = new Button { Content = content, Style = (Style)Resources[style], HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center, Padding = new Thickness(12, 10, 12, 10), MinHeight = 32 };
+                VerticalContentAlignment = VerticalAlignment.Center, Padding = new Thickness(10, 6, 10, 6), MinHeight = 28, ToolTip = label };
             AutomationProperties.SetName(button, label); buttons.Add(id, button); return button;
         }
         private void Request(string action) { if (action != null && ActionRequested != null) ActionRequested(action); }
@@ -204,6 +212,7 @@ namespace SurfingWin.Tray
                 AutomationProperties.SetHelpText(button, selected ? "当前模式" : "仅修改当前运行模式，不改写配置文件");
             }
             buttons["panel"].IsEnabled = ready && !busy; buttons["restart"].IsEnabled = state.ProcessExists && !busy;
+            buttons["exit-tray"].IsEnabled = buttons["exit-stop"].IsEnabled = !busy;
             tunText.Text = ready ? state.Tun ? "已开启" : "已关闭" : "—";
             tunDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, ready && state.Tun ? "Success" : "Muted");
             string message = error ?? (!ready && state.ProcessExists ? state.Detail : "");
@@ -227,7 +236,7 @@ namespace SurfingWin.Tray
         internal void Dismiss()
         {
             if (disposing || !IsVisible) return;
-            BeginAnimation(OpacityProperty, null); Hide();
+            BeginAnimation(OpacityProperty, null); exitOptions.Visibility = Visibility.Collapsed; Hide();
         }
         internal void SetAppearance(bool? value) { appearanceOverride = value; ApplyTheme(value); }
         private void ApplyTheme(bool? value)
@@ -279,7 +288,7 @@ namespace SurfingWin.Tray
                 var area = Forms.Screen.FromPoint(anchor).WorkingArea;
                 double scale = MonitorScale(anchor);
                 MaxHeight = Math.Max(120, (area.Height - 16) / scale);
-                Width = Math.Min(400, (area.Width - 16) / scale);
+                Width = Math.Min(336, (area.Width - 16) / scale);
                 UpdateLayout();
                 double height = ActualHeight > 0 ? ActualHeight : DesiredSize.Height;
                 var bounds = PlacePopup(area, anchor, (int)Math.Ceiling(Width * scale), (int)Math.Ceiling(height * scale));
@@ -430,41 +439,5 @@ namespace SurfingWin.Tray
             }
             return Brushes.Gray;
         }
-    }
-}
-
-namespace SurfingWin.Tray
-{
-    internal sealed class FluentMenuRenderer : Forms.ToolStripProfessionalRenderer
-    {
-        internal readonly Drawing.Color Background, Foreground;
-        private readonly Drawing.Color hover, line, muted;
-        internal FluentMenuRenderer(bool dark)
-        {
-            bool contrast = Forms.SystemInformation.HighContrast;
-            Background = contrast ? Drawing.SystemColors.Menu : dark ? Drawing.Color.FromArgb(30, 34, 42) : Drawing.Color.FromArgb(247, 249, 252);
-            Foreground = contrast ? Drawing.SystemColors.MenuText : dark ? Drawing.Color.FromArgb(237, 242, 248) : Drawing.Color.FromArgb(23, 35, 49);
-            hover = contrast ? Drawing.SystemColors.Highlight : dark ? Drawing.Color.FromArgb(52, 61, 75) : Drawing.Color.FromArgb(231, 237, 246);
-            line = contrast ? Drawing.SystemColors.MenuText : dark ? Drawing.Color.FromArgb(65, 74, 88) : Drawing.Color.FromArgb(222, 229, 239);
-            muted = contrast ? Drawing.SystemColors.GrayText : dark ? Drawing.Color.FromArgb(169, 180, 195) : Drawing.Color.FromArgb(98, 110, 125);
-            RoundedEdges = true;
-        }
-        protected override void OnRenderToolStripBackground(Forms.ToolStripRenderEventArgs e) { e.Graphics.Clear(Background); }
-        protected override void OnRenderToolStripBorder(Forms.ToolStripRenderEventArgs e)
-        { using (var pen = new Drawing.Pen(line)) e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1); }
-        protected override void OnRenderMenuItemBackground(Forms.ToolStripItemRenderEventArgs e)
-        {
-            if (!e.Item.Selected || !e.Item.Enabled) return;
-            using (var brush = new Drawing.SolidBrush(hover)) e.Graphics.FillRectangle(brush, 2, 0, e.Item.Width - 4, e.Item.Height);
-        }
-        protected override void OnRenderItemText(Forms.ToolStripItemTextRenderEventArgs e)
-        {
-            e.TextColor = !e.Item.Enabled ? muted : e.Item.Selected && Forms.SystemInformation.HighContrast ? Drawing.SystemColors.HighlightText : Foreground;
-            base.OnRenderItemText(e);
-        }
-        protected override void OnRenderSeparator(Forms.ToolStripSeparatorRenderEventArgs e)
-        { using (var pen = new Drawing.Pen(line)) e.Graphics.DrawLine(pen, 10, e.Item.Height / 2, e.Item.Width - 10, e.Item.Height / 2); }
-        protected override void OnRenderArrow(Forms.ToolStripArrowRenderEventArgs e)
-        { e.ArrowColor = e.Item.Enabled ? Foreground : muted; base.OnRenderArrow(e); }
     }
 }

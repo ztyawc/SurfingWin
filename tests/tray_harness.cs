@@ -24,6 +24,22 @@ namespace SurfingWin.Tray.Tests
         private static void Check(bool condition, string message)
         { if (!condition) throw new Exception(message); }
         private static void Test(string name, Action action) { action(); Passed.Add(name); }
+        private static void UiTest(string name, Action action)
+        {
+            Exception failure = null;
+            using (var host = new ApplicationContext())
+            using (var kickoff = new System.Windows.Forms.Timer { Interval = 1 })
+            {
+                kickoff.Tick += delegate
+                {
+                    kickoff.Stop();
+                    try { Test(name, action); } catch (Exception error) { failure = error; }
+                    finally { host.ExitThread(); }
+                };
+                kickoff.Start(); Application.Run(host);
+            }
+            if (failure != null) throw new Exception(name, failure);
+        }
         private static void Reject(Action action, string part)
         {
             try { action(); } catch (TrayException e) { Check(e.Message.Contains(part), "Unexpected failure: " + e.Message); return; }
@@ -313,41 +329,46 @@ namespace SurfingWin.Tray.Tests
                         Check(State(v6).Status == CoreStatus.Ready, "IPv6 not ready");
                         CoreManager.Execute(v6, "stop");
                     });
-                Test("real WinForms menu routes commands reflects status and renders", delegate
+                UiTest("Fluent is the only tray menu and its exit options preserve the running core", delegate
                 {
                     var backend = new FakeBackend();
                     using (var context = new TrayContext(backend, null, false, false, false))
                     {
                         Pump(context.RefreshAsync());
-                        Check(context.Item("start").Enabled && !context.Item("stop").Enabled, "stopped menu");
-                        context.Item("start").PerformClick();
-                        Check(backend.Actions.SequenceEqual(new[] { "start" }) && context.Item("stop").Enabled, "start routing");
-                        context.Item("mode-global").PerformClick();
-                        Check(backend.State.Mode == "global" && context.Item("mode-global").Checked, "mode menu");
-                        foreach (string id in new[] { "panel", "config", "logs" }) context.Item(id).PerformClick();
-                        Check(backend.Opened.SequenceEqual(new[] { "panel", "config", "logs" }), "open routing");
-                        context.Menu.PerformLayout(); context.Menu.Size = context.Menu.GetPreferredSize(Size.Empty);
-                        using (var image = new Bitmap(context.Menu.Width, context.Menu.Height))
-                        { context.Menu.DrawToBitmap(image, new Rectangle(Point.Empty, image.Size)); image.Save(args[5]); }
-                        context.Item("exit-tray").PerformClick();
+                        var icon = (NotifyIcon)typeof(TrayContext).GetField("icon", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(context);
+                        Check(icon.ContextMenuStrip == null && icon.ContextMenu == null, "legacy tray menu remains attached");
+                        typeof(NotifyIcon).GetMethod("OnMouseClick", BindingFlags.Instance | BindingFlags.NonPublic)
+                            .Invoke(icon, new object[] { new MouseEventArgs(MouseButtons.Right, 1, 0, 0, 0) });
+                        var center = context.Center;
+                        Check(center != null && center.IsVisible, "actual right-click event did not open Fluent");
+                        Click(center.Item("power")); WaitFor(() => !context.IsBusy);
+                        Check(backend.Actions.SequenceEqual(new[] { "start" }), "power routing");
+                        center.SavePreview(args[5], 1);
+                        Check(!center.Item("exit-tray").IsVisible, "exit options should start collapsed");
+                        Click(center.Item("more")); DelayUi(80);
+                        Check(center.IsVisible && center.Item("exit-tray").IsVisible && center.Item("exit-stop").IsVisible, "inline exit options missing");
+                        center.SavePreview(Path.Combine(parent, "fluent-exit-options.png"), 1);
+                        Click(center.Item("more")); Check(!center.Item("exit-tray").IsVisible, "exit options did not collapse");
+                        Click(center.Item("more")); Click(center.Item("exit-tray"));
                         Check(context.IsClosing && backend.Actions.Count == 1 && backend.State.ProcessExists, "exit tray stopped core");
                     }
                 });
-                Test("failed stop cannot close tray and authentication disables mode changes", delegate
+                UiTest("failed stop cannot close tray and authentication disables mode changes", delegate
                 {
                     var backend = new FakeBackend(); backend.State = FakeBackend.Ready(); backend.FailStop = true;
                     using (var context = new TrayContext(backend, null, false, false, false))
                     {
-                        Pump(context.RefreshAsync()); context.Item("exit-stop").PerformClick();
-                        Check(!context.IsClosing && context.Item("stop").Enabled, "closed after failed stop");
+                        Pump(context.RefreshAsync()); context.ShowControlCenter(new Point(500, 600), false);
+                        var center = context.Center; Click(center.Item("more")); Click(center.Item("exit-stop")); WaitFor(() => !context.IsBusy);
+                        Check(!context.IsClosing && center.Item("power").IsEnabled && center.Detail.Contains("Fixture stop failed"), "closed after failed stop");
                         backend.State.Status = CoreStatus.Authentication; backend.State.Detail = "认证失败";
                         Pump(context.RefreshAsync());
-                        Check(!context.Item("modes").Enabled && context.Item("stop").Enabled, "auth menu state");
-                        backend.FailStop = false; context.Item("exit-stop").PerformClick();
+                        Check(!center.Item("mode-rule").IsEnabled && center.Item("power").IsEnabled, "auth popup state");
+                        backend.FailStop = false; Click(center.Item("exit-stop")); WaitFor(() => context.IsClosing);
                         Check(context.IsClosing && !backend.State.ProcessExists, "stop then exit");
                     }
                 });
-                Test("menu waits for status refresh and prevents overlapping operations", delegate
+                UiTest("Fluent waits for status refresh and prevents overlapping operations and exits", delegate
                 {
                     var backend = new FakeBackend();
                     var readGate = new TaskCompletionSource<TrayState>();
@@ -355,16 +376,18 @@ namespace SurfingWin.Tray.Tests
                     backend.ReadGate = readGate; backend.StartGate = startGate;
                     using (var context = new TrayContext(backend, null, false, false, false))
                     {
+                        context.ShowControlCenter(new Point(500, 600), false); var center = context.Center;
                         Task refresh = context.RefreshAsync();
-                        context.Item("start").PerformClick();
+                        Click(center.Item("power"));
                         Check(backend.Actions.Count == 0, "action raced the status read");
                         readGate.SetResult(backend.State); Pump(refresh);
                         WaitFor(() => backend.Actions.Count == 1);
-                        context.Item("start").PerformClick(); context.Item("stop").PerformClick();
-                        Check(backend.Actions.Count == 1 && !context.Item("exit-tray").Enabled, "overlapping action");
+                        center.Item("power").RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        center.Item("exit-tray").RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        Check(backend.Actions.Count == 1 && !context.IsClosing && !center.Item("exit-tray").IsEnabled, "overlapping action or exit");
                         startGate.SetResult(0); WaitFor(() => !context.IsBusy);
-                        Check(context.Item("stop").Enabled && backend.Actions.Single() == "start", "menu did not recover");
-                        context.Item("exit-tray").PerformClick();
+                        Check(center.Item("power").IsEnabled && backend.Actions.Single() == "start", "popup did not recover");
+                        Click(center.Item("more")); Click(center.Item("exit-tray"));
                     }
                 });
                 Test("Fluent popup placement stays within negative-coordinate monitors and scaled working areas", delegate
@@ -375,11 +398,11 @@ namespace SurfingWin.Tray.Tests
                             foreach (var point in new[] { area.Location, new Point(area.Right - 20, area.Bottom + 20),
                                 new Point(area.Left + 5, area.Top + 5), new Point(area.Right - 5, area.Top + 5) })
                             {
-                                var bounds = FluentControlCenter.PlacePopup(area, point, (int)(400 * scale), (int)(490 * scale));
+                                var bounds = FluentControlCenter.PlacePopup(area, point, (int)(336 * scale), (int)(380 * scale));
                                 Check(area.Contains(bounds), "Popup escaped screen: " + bounds + " from " + area);
                             }
                 });
-                Test("real WPF control center routes actions reflects state and preserves native menu", delegate
+                UiTest("real WPF control center routes actions and reflects state", delegate
                 {
                     var backend = new FakeBackend();
                     using (var context = new TrayContext(backend, null, false, false, false))
@@ -393,7 +416,7 @@ namespace SurfingWin.Tray.Tests
                         Click(center.Item("power")); WaitFor(() => !context.IsBusy);
                         Check(backend.Actions.SequenceEqual(new[] { "start" }) && center.Heading == "代理已启动", "popup start routing");
                         Click(center.Item("mode-global")); WaitFor(() => !context.IsBusy);
-                        Check(backend.State.Mode == "global" && context.Item("mode-global").Checked, "popup and menu mode disagree");
+                        Check(backend.State.Mode == "global" && center.Item("mode-global").FontWeight == System.Windows.FontWeights.SemiBold, "selected mode not reflected in popup");
                         foreach (string id in new[] { "panel", "config", "logs" }) Click(center.Item(id));
                         Check(backend.Opened.SequenceEqual(new[] { "panel", "config", "logs" }), "popup open routing");
                         Click(center.Item("restart")); WaitFor(() => !context.IsBusy);
@@ -410,7 +433,7 @@ namespace SurfingWin.Tray.Tests
                         Check(!center.IsVisible && !context.IsClosing, "closing popup exited the tray");
                     }
                 });
-                Test("Fluent popup serializes commands while a background operation is pending", delegate
+                UiTest("Fluent popup serializes commands while a background operation is pending", delegate
                 {
                     var backend = new FakeBackend(); var gate = new TaskCompletionSource<int>(); backend.StartGate = gate;
                     using (var context = new TrayContext(backend, null, false, false, false))
@@ -425,17 +448,21 @@ namespace SurfingWin.Tray.Tests
                         center.Dismiss();
                     }
                 });
-                Test("Fluent single click double click Escape and outside focus preserve tray lifetime", delegate
+                UiTest("right click opens Fluent immediately while left click stays quiet and double click opens Zashboard", delegate
                 {
                     var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
                     using (var context = new TrayContext(backend, null, false, false, false))
                     {
                         Pump(context.RefreshAsync());
-                        context.ScheduleControlCenter(new Point(400, 500)); Check(context.Center == null, "single click not debounced");
-                        context.HandleDoubleClick(); DelayUi(SystemInformation.DoubleClickTime + 80);
+                        context.HandleTrayClick(MouseButtons.Left, new Point(400, 500)); DelayUi(SystemInformation.DoubleClickTime + 30);
+                        Check(context.Center == null, "left click unexpectedly opened Fluent");
+                        context.HandleDoubleClick(); DelayUi(30);
                         Check(context.Center == null && backend.Opened.SequenceEqual(new[] { "panel" }), "double click also opened popup");
-                        context.ScheduleControlCenter(new Point(400, 500)); WaitFor(() => context.Center != null && context.Center.IsVisible);
+                        context.HandleTrayClick(MouseButtons.Right, new Point(400, 500));
+                        Check(context.Center != null && context.Center.IsVisible, "right click did not open Fluent immediately");
                         var center = context.Center;
+                        context.HandleTrayClick(MouseButtons.Right, new Point(400, 500)); Check(!center.IsVisible, "second right click did not dismiss Fluent");
+                        context.ShowControlCenter(new Point(400, 500), false);
                         var key = new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
                             System.Windows.PresentationSource.FromVisual(center), 0, System.Windows.Input.Key.Escape)
                             { RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent };
@@ -444,19 +471,23 @@ namespace SurfingWin.Tray.Tests
                         using (var outside = new Form { Width = 100, Height = 100, ShowInTaskbar = false })
                         {
                             outside.Show(); outside.Activate(); WaitFor(() => !center.IsVisible);
-                            context.ScheduleControlCenter(new Point(400, 500)); DelayUi(SystemInformation.DoubleClickTime + 80);
+                            context.HandleTrayClick(MouseButtons.Right, new Point(400, 500)); DelayUi(50);
                             Check(!center.IsVisible, "tray click reopened the popup immediately after losing focus"); outside.Close();
                         }
+                        DelayUi(220); context.HandleTrayClick(MouseButtons.Right, new Point(400, 500));
+                        Check(center.IsVisible, "right click could not reopen Fluent after dismissal");
+                        context.HandleDoubleClick(); Check(!center.IsVisible && backend.Opened.Count == 2, "double click did not dismiss Fluent and open Zashboard");
                         Check(!context.IsClosing && backend.State.ProcessExists, "outside focus stopped core");
                     }
                 });
-                Test("Fluent light and dark surfaces render at 100 125 150 and 200 percent", delegate
+                UiTest("Fluent light and dark surfaces render at 100 125 150 and 200 percent", delegate
                 {
                     var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
                     using (var context = new TrayContext(backend, null, false, false, false))
                     {
                         Pump(context.RefreshAsync()); context.ShowControlCenter(new Point(700, 700), false);
                         var center = context.Center;
+                        Check(center.ActualWidth <= 336 && center.ActualHeight <= 420, "default control center is no longer compact");
                         foreach (bool dark in new[] { false, true })
                         {
                             center.SetAppearance(dark); Check(center.DarkAppearance == dark, "appearance not applied");
@@ -466,7 +497,7 @@ namespace SurfingWin.Tray.Tests
                                 string path = Path.Combine(parent, "fluent-" + (dark ? "dark" : "light") + "-" + (int)(scale * 100) + ".png");
                                 center.SavePreview(path, scale);
                                 using (var image = Image.FromFile(path))
-                                    Check(image.Width >= 360 * scale && image.Height >= 300 * scale, "scaled preview is empty");
+                                    Check(image.Width >= 320 * scale && image.Width <= 337 * scale && image.Height >= 300 * scale, "scaled preview is empty or too wide");
                             }
                         }
                         center.SetAppearance(null); center.Dismiss();
