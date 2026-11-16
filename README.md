@@ -70,7 +70,7 @@ The authors are not liable for any direct or indirect damages, including but not
 2. 如果通过从 Windows 客户端浏览器下载，建议在**解压前**右键文件 -> **属性** -> 点击 **解除锁定**（Unblock）解决每次执行所带来的烦人安全提示
 3. 托盘启停内核时会按需请求管理员权限，出现 UAC 提示时允许即可。托盘自身以当前用户权限运行；TUN 模式需要管理员权限。
 4. 编辑 `config/config.yaml` 填入订阅，使用方法与 [Android](https://github.com/GitMetaio/Surfing) 相同
-5. 双击 **启动服务.bat**，右下角出现 SurfingWin 托盘图标；内核就绪后，双击图标打开面板。图标也可能被 Windows 收纳在通知区域的折叠菜单中。
+5. 双击 **启动服务.bat**，右下角出现 SurfingWin 托盘图标；单击图标打开 Fluent 快捷控制中心，双击图标打开 Zashboard。图标也可能被 Windows 收纳在通知区域的折叠菜单中。
 6. 控制台地址: 
    ```text
    http://localhost:9090/ui    
@@ -80,9 +80,12 @@ The authors are not liable for any direct or indirect damages, including but not
 
 ## 系统托盘
 
-运行环境：Windows 10/11，.NET Framework 4.8 或更高的 4.x 版本。`bin/SurfingTray.exe` 为 C# / Windows Forms 程序，无需安装 Python、PowerShell 7 或额外的界面框架。
+运行环境：Windows 10/11，.NET Framework 4.8 或更高的 4.x 版本。`bin/SurfingTray.exe` 使用 C#、Windows Forms 托盘入口与 WPF 控制中心，无需安装 Python、PowerShell 7、WebView2 或第三方界面框架。
 
-- 双击图标打开 Zashboard；右键菜单可启动、停止、重启代理，切换规则／全局／直连模式，编辑配置文件或打开日志目录。
+- **单击图标**打开 Fluent 快捷控制中心：查看内核和 TUN 状态，使用电源按钮启停代理，一键切换规则／全局／直连模式，打开 Zashboard、配置文件或日志目录。为区分单击和双击，单击弹出会等待系统设定的双击判定时间。
+- **双击图标**在内核就绪时打开 Zashboard；**右键图标**或点击控制中心右上角“更多”保留完整菜单，包括重启、退出托盘和停止代理并退出。
+- 控制中心跟随 Windows 应用的深浅主题，使用圆角、柔和阴影和矢量图标；支持高对比度模式，关闭系统界面动画时不播放淡入。界面按需创建，使用原生 WPF 控件，不启动浏览器进程来渲染托盘 UI。
+- 点击控制中心外部、按 **Esc** 或关闭弹窗只会收起控制中心。面板按所点显示器的工作区定位，采用 Per-Monitor V2 DPI 感知；在可用高度不足时允许滚动，确保操作入口可达。
 - 绿色表示本项目内核及控制接口正常，灰色表示已停止，黄色表示正在操作或控制接口异常。状态约每 3 秒刷新，菜单同时显示文字、当前模式和 TUN 状态。这里的“运行中”表示内核接口就绪，不代表订阅或外网连通性已经检测通过。
 - **退出托盘，保持代理运行**只关闭托盘；**停止代理并退出**会确认本项目内核已停止后再退出，停止失败时保留托盘。
 - 多次打开同一目录的托盘只保留一个实例。启停和 API 操作按内核可执行文件路径及控制端口归属识别当前项目，不操作其他目录的同名内核。

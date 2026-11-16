@@ -11,7 +11,8 @@ if (-not (Test-Path -LiteralPath $compiler)) {
 }
 if (-not (Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler not found.' }
 
-$sourceNames = @('TrayCore.cs', 'TrayApplication.cs', 'SurfingTray.manifest', 'SurfingTray.ico')
+$sourceNames = @('TrayCore.cs', 'TrayApplication.cs', 'FluentControlCenter.cs', 'SurfingTray.manifest', 'SurfingTray.ico')
+$wpf = Join-Path (Split-Path $compiler -Parent) 'WPF'
 $hashInput = New-Object IO.MemoryStream
 $utf8 = New-Object Text.UTF8Encoding($false)
 foreach ($name in $sourceNames) {
@@ -32,9 +33,11 @@ try {
     [IO.Directory]::CreateDirectory((Split-Path $OutputPath -Parent)) | Out-Null
     & $compiler /nologo /utf8output /codepage:65001 /target:winexe /platform:anycpu /optimize+ `
         /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Net.Http.dll `
-        /reference:System.Web.Extensions.dll "/win32manifest:$sourceRoot\SurfingTray.manifest" `
+        /reference:System.Web.Extensions.dll "/reference:$wpf\WindowsBase.dll" /reference:System.Xaml.dll `
+        "/reference:$wpf\PresentationCore.dll" "/reference:$wpf\PresentationFramework.dll" `
+        "/reference:$wpf\WindowsFormsIntegration.dll" "/win32manifest:$sourceRoot\SurfingTray.manifest" `
         "/win32icon:$sourceRoot\SurfingTray.ico" "/out:$OutputPath" `
-        (Join-Path $sourceRoot 'TrayCore.cs') (Join-Path $sourceRoot 'TrayApplication.cs') $stamp
+        (Join-Path $sourceRoot 'TrayCore.cs') (Join-Path $sourceRoot 'TrayApplication.cs') (Join-Path $sourceRoot 'FluentControlCenter.cs') $stamp
     if ($LASTEXITCODE -ne 0) { throw 'Tray compilation failed.' }
     Write-Output "Built SurfingTray.exe (source SHA-256: $sourceHash)"
 } finally {

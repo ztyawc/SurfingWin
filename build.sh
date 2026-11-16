@@ -16,7 +16,7 @@ trap 'exit 1' HUP INT TERM
 git archive --format=zip --output="$STAGING_DIR/$OUTPUT_ZIP" HEAD -- \
     README.md LICENSE \
     bin/clash-amd64.exe bin/SurfingTray.exe \
-    src/tray/TrayCore.cs src/tray/TrayApplication.cs src/tray/SurfingTray.manifest src/tray/SurfingTray.ico \
+    src/tray/TrayCore.cs src/tray/TrayApplication.cs src/tray/FluentControlCenter.cs src/tray/SurfingTray.manifest src/tray/SurfingTray.ico \
     config/config.yaml config/rules config/webroot \
     'scripts/*.vbs' 'scripts/*.bat' 'scripts/*.ps1' \
     scripts/Surfing.startup.xml \

@@ -53,6 +53,10 @@ class TrayTests(unittest.TestCase):
             [str(cls.compiler), "/nologo", "/utf8output", "/codepage:65001", "/target:" + target,
              "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll",
              "/reference:System.Net.Http.dll", "/reference:System.Web.Extensions.dll",
+             "/reference:" + windows_path(cls.compiler.parent / "WPF" / "WindowsBase.dll"), "/reference:System.Xaml.dll",
+             "/reference:" + windows_path(cls.compiler.parent / "WPF" / "PresentationCore.dll"),
+             "/reference:" + windows_path(cls.compiler.parent / "WPF" / "PresentationFramework.dll"),
+             "/reference:" + windows_path(cls.compiler.parent / "WPF" / "WindowsFormsIntegration.dll"),
              "/out:" + windows_path(output), *extra, *(windows_path(path) for path in sources)],
             capture_output=True, timeout=60,
         )
@@ -68,11 +72,11 @@ class TrayTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, (result.stdout + result.stderr).decode("utf-8", errors="replace"))
         harness = self.folder / "TrayHarness.exe"
-        sources = [PROJECT_ROOT / "src" / "tray" / name for name in ("TrayCore.cs", "TrayApplication.cs")]
+        sources = [PROJECT_ROOT / "src" / "tray" / name for name in ("TrayCore.cs", "TrayApplication.cs", "FluentControlCenter.cs")]
         self.compile(harness, "winexe", [*sources, PROJECT_ROOT / "tests" / "tray_harness.cs"],
-                     ["/main:SurfingWin.Tray.Tests.Harness"])
+                     ["/main:SurfingWin.Tray.Tests.Harness", "/win32manifest:" + windows_path(PROJECT_ROOT / "src/tray/SurfingTray.manifest")])
         hasher = hashlib.sha256()
-        for name in ("TrayCore.cs", "TrayApplication.cs", "SurfingTray.manifest", "SurfingTray.ico"):
+        for name in ("TrayCore.cs", "TrayApplication.cs", "FluentControlCenter.cs", "SurfingTray.manifest", "SurfingTray.ico"):
             path = PROJECT_ROOT / "src" / "tray" / name
             data = path.read_bytes() if path.suffix == ".ico" else path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").encode()
             hasher.update((name + "\n").encode())
@@ -90,13 +94,18 @@ class TrayTests(unittest.TestCase):
         diagnostics = json.loads(results.read_text(encoding="utf-8-sig"))
         self.assertEqual(completed.returncode, 0, json.dumps(diagnostics, ensure_ascii=False, indent=2))
         self.assertTrue(diagnostics["success"], diagnostics)
-        self.assertGreaterEqual(len(diagnostics["passed"]), 13)
+        self.assertGreaterEqual(len(diagnostics["passed"]), 21)
         print("\n  Tray scenarios: " + "; ".join(diagnostics["passed"]))
         for reason in diagnostics.get("skipped", []):
             print("  Skipped native scenario: " + reason)
         self.assertTrue(preview.is_file())
         if os.environ.get("SURFING_TRAY_PREVIEW"):
             shutil.copyfile(preview, os.environ["SURFING_TRAY_PREVIEW"])
+        if os.environ.get("SURFING_FLUENT_PREVIEW_DIR"):
+            destination = Path(os.environ["SURFING_FLUENT_PREVIEW_DIR"])
+            destination.mkdir(parents=True, exist_ok=True)
+            for image in self.folder.glob("fluent-*.png"):
+                shutil.copyfile(image, destination / image.name)
 
     def test_vbs_launcher_passes_actions_without_shell_interpretation(self):
         fixture = self.folder / "launcher 路径 with spaces & symbols"
@@ -130,12 +139,13 @@ class TrayTests(unittest.TestCase):
     def test_real_mihomo_loopback_only_without_tun(self):
         harness = self.folder / "TrayHarness.exe"
         if not harness.is_file():
-            sources = [PROJECT_ROOT / "src" / "tray" / name for name in ("TrayCore.cs", "TrayApplication.cs")]
+            sources = [PROJECT_ROOT / "src" / "tray" / name for name in ("TrayCore.cs", "TrayApplication.cs", "FluentControlCenter.cs")]
             self.compile(harness, "winexe", [*sources, PROJECT_ROOT / "tests" / "tray_harness.cs"],
-                         ["/main:SurfingWin.Tray.Tests.Harness"])
+                         ["/main:SurfingWin.Tray.Tests.Harness", "/win32manifest:" + windows_path(PROJECT_ROOT / "src/tray/SurfingTray.manifest")])
         fixture = self.folder / "real-core 路径 with spaces & symbols"
         (fixture / "bin").mkdir(parents=True)
         shutil.copyfile(PROJECT_ROOT / "bin" / "clash-amd64.exe", fixture / "bin" / "clash-amd64.exe")
+        shutil.copytree(PROJECT_ROOT / "config/webroot/Zash", fixture / "config/webroot/Zash")
         result_path = self.folder / "real-core-results.json"
         result = subprocess.run(
             [str(harness), "--real-smoke", windows_path(fixture), windows_path(result_path)],
@@ -147,6 +157,8 @@ class TrayTests(unittest.TestCase):
         self.assertTrue(diagnostics["success"], diagnostics)
         self.assertFalse(diagnostics["tun"])
         self.assertTrue(diagnostics["gracefulStop"])
+        self.assertEqual(diagnostics["dashboardStatus"], 200)
+        self.assertGreaterEqual(diagnostics["dashboardAssets"], 2)
         print("\n  Real Mihomo smoke: " + json.dumps(diagnostics, ensure_ascii=False))
 
 

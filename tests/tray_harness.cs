@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Http;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -85,6 +86,17 @@ namespace SurfingWin.Tray.Tests
             File.WriteAllText(path, Json.Serialize(data));
         }
         private static TrayState State(string root) { return CoreApi.ReadAsync(root).GetAwaiter().GetResult(); }
+        private static void Click(System.Windows.Controls.Button button)
+        {
+            Check(button.IsEnabled, "Disabled WPF control was clicked");
+            button.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent, button));
+            Application.DoEvents();
+        }
+        private static void DelayUi(int milliseconds)
+        {
+            var watch = Stopwatch.StartNew();
+            while (watch.ElapsedMilliseconds < milliseconds) { Application.DoEvents(); Thread.Sleep(10); }
+        }
 
         [STAThread]
         private static int Main(string[] args)
@@ -100,10 +112,28 @@ namespace SurfingWin.Tray.Tests
                         "'\nsecret: '" + Guid.NewGuid().ToString("N") + "'\n" +
                         "mixed-port: 0\nallow-lan: false\nipv6: false\nmode: rule\n" +
                         "tun:\n  enable: false\ndns:\n  enable: false\n" +
+                        "external-ui: ./webroot/Zash/\n" +
                         "geo-auto-update: false\nfind-process-mode: off\nrules:\n  - MATCH,DIRECT\n");
                     CoreManager.Execute(root, "start");
                     var running = State(root);
                     Check(running.Status == CoreStatus.Ready && !running.Tun && running.Mode == "rule", "real core readiness");
+                    var panel = TrayBackend.PanelAddress(root);
+                    Check(panel.AbsolutePath == "/ui/" && panel.Query == "" && panel.UserInfo == "" && panel.Fragment == "", "dashboard URL contains credentials or an incorrect path");
+                    int assets = 0;
+                    using (var handler = new HttpClientHandler { UseProxy = false })
+                    using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(4) })
+                    {
+                        string html = client.GetStringAsync(panel).GetAwaiter().GetResult();
+                        Check(html == File.ReadAllText(Path.Combine(root, "config", "webroot", "Zash", "index.html")), "dashboard homepage differs from bundle");
+                        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(html, "(?:src|href)=\"(\\./assets/[^\"]+)\""))
+                        {
+                            string relative = match.Groups[1].Value.Substring(2);
+                            byte[] downloaded = client.GetByteArrayAsync(new Uri(panel, relative)).GetAwaiter().GetResult();
+                            Check(downloaded.SequenceEqual(File.ReadAllBytes(Path.Combine(root, "config", "webroot", "Zash", relative.Replace('/', Path.DirectorySeparatorChar)))), "dashboard asset differs: " + relative);
+                            assets++;
+                        }
+                        Check(assets >= 2, "dashboard entry assets were not checked");
+                    }
                     CoreApi.ChangeModeAsync(root, "global").GetAwaiter().GetResult();
                     CoreApi.ChangeModeAsync(root, "direct").GetAwaiter().GetResult();
                     CoreManager.Execute(root, "stop");
@@ -111,7 +141,7 @@ namespace SurfingWin.Tray.Tests
                     string errorLog = Path.Combine(Project.Logs(root), "tray-error.log");
                     Check(!File.Exists(errorLog), "real core required forced termination");
                     File.WriteAllText(args[2], Json.Serialize(new { success = true, version = running.Version,
-                        tun = running.Tun, modes = new[] { "rule", "global", "direct" }, gracefulStop = true }));
+                        tun = running.Tun, modes = new[] { "rule", "global", "direct" }, gracefulStop = true, dashboardStatus = 200, dashboardAssets = assets }));
                     return 0;
                 }
                 catch (Exception e)
@@ -337,6 +367,111 @@ namespace SurfingWin.Tray.Tests
                         context.Item("exit-tray").PerformClick();
                     }
                 });
+                Test("Fluent popup placement stays within negative-coordinate monitors and scaled working areas", delegate
+                {
+                    foreach (var area in new[] { new Rectangle(0, 0, 1920, 1040), new Rectangle(-1920, -400, 1920, 1080),
+                        new Rectangle(1920, 0, 2560, 1400), new Rectangle(-900, -1400, 900, 1400), new Rectangle(0, 0, 320, 480) })
+                        foreach (double scale in new[] { 1.0, 1.25, 1.5, 2.0 })
+                            foreach (var point in new[] { area.Location, new Point(area.Right - 20, area.Bottom + 20),
+                                new Point(area.Left + 5, area.Top + 5), new Point(area.Right - 5, area.Top + 5) })
+                            {
+                                var bounds = FluentControlCenter.PlacePopup(area, point, (int)(400 * scale), (int)(490 * scale));
+                                Check(area.Contains(bounds), "Popup escaped screen: " + bounds + " from " + area);
+                            }
+                });
+                Test("real WPF control center routes actions reflects state and preserves native menu", delegate
+                {
+                    var backend = new FakeBackend();
+                    using (var context = new TrayContext(backend, null, false, false, false))
+                    {
+                        Pump(context.RefreshAsync());
+                        var area = Screen.PrimaryScreen.WorkingArea;
+                        context.ShowControlCenter(new Point(area.Right - 25, area.Bottom - 15), false);
+                        var center = context.Center;
+                        Check(center != null && center.IsVisible, "WPF window did not open: " + backend.LastError);
+                        Check(center.Heading == "代理已停止" && center.Item("power").IsEnabled && !center.Item("panel").IsEnabled, "stopped popup state");
+                        Click(center.Item("power")); WaitFor(() => !context.IsBusy);
+                        Check(backend.Actions.SequenceEqual(new[] { "start" }) && center.Heading == "代理已启动", "popup start routing");
+                        Click(center.Item("mode-global")); WaitFor(() => !context.IsBusy);
+                        Check(backend.State.Mode == "global" && context.Item("mode-global").Checked, "popup and menu mode disagree");
+                        foreach (string id in new[] { "panel", "config", "logs" }) Click(center.Item(id));
+                        Check(backend.Opened.SequenceEqual(new[] { "panel", "config", "logs" }), "popup open routing");
+                        Click(center.Item("restart")); WaitFor(() => !context.IsBusy);
+                        Check(backend.Actions.Last() == "restart", "popup restart routing");
+                        backend.State.Tun = false; Pump(context.RefreshAsync()); Check(center.TunStatus == "已关闭", "TUN false state");
+                        backend.State.Status = CoreStatus.Authentication; backend.State.Detail = "认证失败"; Pump(context.RefreshAsync());
+                        Check(!center.Item("mode-rule").IsEnabled && !center.Item("panel").IsEnabled && center.Item("power").IsEnabled && center.Detail == "认证失败", "authentication popup controls");
+                        backend.State = FakeBackend.Ready(); backend.FailStop = true; Pump(context.RefreshAsync());
+                        Click(center.Item("power")); WaitFor(() => !context.IsBusy);
+                        Check(!context.IsClosing && backend.State.ProcessExists && center.Detail.Contains("Fixture stop failed"), "popup lost failed stop feedback");
+                        backend.FailStop = false; Click(center.Item("power")); WaitFor(() => !context.IsBusy);
+                        Check(!backend.State.ProcessExists && center.Heading == "代理已停止", "popup stop routing");
+                        center.Close(); Application.DoEvents();
+                        Check(!center.IsVisible && !context.IsClosing, "closing popup exited the tray");
+                    }
+                });
+                Test("Fluent popup serializes commands while a background operation is pending", delegate
+                {
+                    var backend = new FakeBackend(); var gate = new TaskCompletionSource<int>(); backend.StartGate = gate;
+                    using (var context = new TrayContext(backend, null, false, false, false))
+                    {
+                        Pump(context.RefreshAsync()); context.ShowControlCenter(new Point(400, 500), false);
+                        var center = context.Center; Click(center.Item("power"));
+                        Check(context.IsBusy && !center.Item("power").IsEnabled && !center.Item("mode-rule").IsEnabled, "busy popup allows command overlap");
+                        center.Item("power").RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        Check(backend.Actions.Count == 1, "duplicate popup command");
+                        gate.SetResult(0); WaitFor(() => !context.IsBusy);
+                        Check(center.Item("power").IsEnabled && center.Item("mode-rule").IsEnabled, "popup did not recover after operation");
+                        center.Dismiss();
+                    }
+                });
+                Test("Fluent single click double click Escape and outside focus preserve tray lifetime", delegate
+                {
+                    var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
+                    using (var context = new TrayContext(backend, null, false, false, false))
+                    {
+                        Pump(context.RefreshAsync());
+                        context.ScheduleControlCenter(new Point(400, 500)); Check(context.Center == null, "single click not debounced");
+                        context.HandleDoubleClick(); DelayUi(SystemInformation.DoubleClickTime + 80);
+                        Check(context.Center == null && backend.Opened.SequenceEqual(new[] { "panel" }), "double click also opened popup");
+                        context.ScheduleControlCenter(new Point(400, 500)); WaitFor(() => context.Center != null && context.Center.IsVisible);
+                        var center = context.Center;
+                        var key = new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice,
+                            System.Windows.PresentationSource.FromVisual(center), 0, System.Windows.Input.Key.Escape)
+                            { RoutedEvent = System.Windows.Input.Keyboard.KeyDownEvent };
+                        center.RaiseEvent(key); Check(!center.IsVisible && !context.IsClosing, "Escape exited the tray");
+                        context.ShowControlCenter(new Point(400, 500), false);
+                        using (var outside = new Form { Width = 100, Height = 100, ShowInTaskbar = false })
+                        {
+                            outside.Show(); outside.Activate(); WaitFor(() => !center.IsVisible);
+                            context.ScheduleControlCenter(new Point(400, 500)); DelayUi(SystemInformation.DoubleClickTime + 80);
+                            Check(!center.IsVisible, "tray click reopened the popup immediately after losing focus"); outside.Close();
+                        }
+                        Check(!context.IsClosing && backend.State.ProcessExists, "outside focus stopped core");
+                    }
+                });
+                Test("Fluent light and dark surfaces render at 100 125 150 and 200 percent", delegate
+                {
+                    var backend = new FakeBackend(); backend.State = FakeBackend.Ready();
+                    using (var context = new TrayContext(backend, null, false, false, false))
+                    {
+                        Pump(context.RefreshAsync()); context.ShowControlCenter(new Point(700, 700), false);
+                        var center = context.Center;
+                        foreach (bool dark in new[] { false, true })
+                        {
+                            center.SetAppearance(dark); Check(center.DarkAppearance == dark, "appearance not applied");
+                            DelayUi(80);
+                            foreach (double scale in new[] { 1.0, 1.25, 1.5, 2.0 })
+                            {
+                                string path = Path.Combine(parent, "fluent-" + (dark ? "dark" : "light") + "-" + (int)(scale * 100) + ".png");
+                                center.SavePreview(path, scale);
+                                using (var image = Image.FromFile(path))
+                                    Check(image.Width >= 360 * scale && image.Height >= 300 * scale, "scaled preview is empty");
+                            }
+                        }
+                        center.SetAppearance(null); center.Dismiss();
+                    }
+                });
                 File.WriteAllText(resultPath, Json.Serialize(new { success = true, passed = Passed, skipped = Skipped })); return 0;
             }
             catch (Exception e)
@@ -353,6 +488,7 @@ namespace SurfingWin.Tray.Tests
             internal TrayState State = new TrayState { Status = CoreStatus.Stopped, Detail = "已停止" };
             internal readonly List<string> Actions = new List<string>(), Opened = new List<string>();
             internal bool FailStop;
+            internal Exception LastError;
             internal TaskCompletionSource<TrayState> ReadGate;
             internal TaskCompletionSource<int> StartGate;
             internal static TrayState Ready()
@@ -371,7 +507,7 @@ namespace SurfingWin.Tray.Tests
             }
             public Task ChangeModeAsync(string mode) { State.Mode = mode; return Task.FromResult(0); }
             public void Open(string target) { Opened.Add(target); }
-            public void ReportError(Exception error) { }
+            public void ReportError(Exception error) { LastError = error; }
         }
     }
 }

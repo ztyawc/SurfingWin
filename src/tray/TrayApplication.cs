@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("SurfingWin Tray")]
 [assembly: AssemblyDescription("Portable Mihomo tray controller")]
-[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
 
 namespace SurfingWin.Tray
@@ -33,6 +33,8 @@ namespace SurfingWin.Tray
     {
         private readonly string root;
         internal TrayBackend(string root) { this.root = root; }
+        internal static Uri PanelAddress(string root)
+        { return new Uri(ControllerSettings.Load(Project.Config(root)).Address, "ui/"); }
         public Task<TrayState> ReadStateAsync() { return Task.Run(() => CoreApi.ReadAsync(root)); }
         public Task ExecuteAsync(string action) { return Task.Run(() => Program.RunCommand(root, action)); }
         public Task ChangeModeAsync(string mode) { return Task.Run(() => CoreApi.ChangeModeAsync(root, mode)); }
@@ -45,7 +47,7 @@ namespace SurfingWin.Tray
             if (target == "panel")
             {
                 // Deliberately omit the API secret from the browser URL and history.
-                string url = new Uri(ControllerSettings.Load(Project.Config(root)).Address, "ui/").AbsoluteUri;
+                string url = PanelAddress(root).AbsoluteUri;
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             }
             else if (target == "config")
@@ -65,14 +67,22 @@ namespace SurfingWin.Tray
         private readonly ITrayBackend backend;
         private readonly NotifyIcon icon;
         private readonly System.Windows.Forms.Timer timer;
+        private readonly System.Windows.Forms.Timer clickTimer;
+        private readonly Font menuFont;
         private readonly EventWaitHandle startSignal;
         private readonly Icon readyIcon, stoppedIcon, warningIcon;
         private readonly Dictionary<string, ToolStripMenuItem> items = new Dictionary<string, ToolStripMenuItem>();
         private TrayState state = new TrayState();
         private bool busy, refreshing, closing, pendingStart, errorTip;
+        private FluentControlCenter center;
+        private Point clickPoint;
+        private DateTime lastDoubleClick = DateTime.MinValue;
+        private string operationError;
+        private bool clickClosesCenter;
         internal readonly ContextMenuStrip Menu;
         internal bool IsClosing { get { return closing; } }
         internal bool IsBusy { get { return busy || refreshing; } }
+        internal FluentControlCenter Center { get { return center; } }
 
         internal TrayContext(ITrayBackend backend, EventWaitHandle signal, bool autoStart, bool visible = true,
             bool poll = true)
@@ -80,7 +90,8 @@ namespace SurfingWin.Tray
             this.backend = backend;
             startSignal = signal;
             pendingStart = autoStart;
-            Menu = new ContextMenuStrip { ShowImageMargin = false };
+            menuFont = new Font("Segoe UI", 9.5f);
+            Menu = new ContextMenuStrip { ShowImageMargin = false, Font = menuFont, Padding = new Padding(5) };
             Add("status", "SurfingWin · 正在检查", null).Enabled = false;
             Add("summary", "模式：—    TUN：—", null).Enabled = false;
             Menu.Items.Add(new ToolStripSeparator());
@@ -104,12 +115,23 @@ namespace SurfingWin.Tray
             Menu.Items.Add(new ToolStripSeparator());
             Add("exit-tray", "退出托盘，保持代理运行", delegate { ExitThread(); });
             Add("exit-stop", "停止代理并退出", async delegate { await ExecuteAsync("stop", true); });
+            Menu.Opening += delegate { CancelPendingClick(); if (center != null) center.Dismiss(); ApplyMenuTheme(); };
             readyIcon = DrawIcon(Color.FromArgb(0, 143, 107));
             stoppedIcon = DrawIcon(Color.FromArgb(118, 125, 136));
             warningIcon = DrawIcon(Color.FromArgb(205, 139, 0));
             icon = new NotifyIcon { Icon = warningIcon, Text = "SurfingWin · 正在检查", ContextMenuStrip = Menu,
                 Visible = visible };
-            icon.DoubleClick += delegate { if (state.Status == CoreStatus.Ready) Open("panel"); };
+            clickTimer = new System.Windows.Forms.Timer { Interval = SystemInformation.DoubleClickTime };
+            clickTimer.Tick += delegate
+            {
+                clickTimer.Stop();
+                if (closing) return;
+                if (clickClosesCenter && center != null) center.Dismiss(); else ToggleControlCenter(clickPoint);
+            };
+            icon.MouseClick += delegate(object sender, MouseEventArgs e)
+            { if (e.Button == MouseButtons.Left) ScheduleControlCenter(Cursor.Position); };
+            icon.MouseDoubleClick += delegate(object sender, MouseEventArgs e)
+            { if (e.Button == MouseButtons.Left) HandleDoubleClick(); };
             icon.BalloonTipClicked += delegate { if (errorTip) Open("logs"); };
             timer = new System.Windows.Forms.Timer { Interval = 250 };
             timer.Tick += async delegate
@@ -131,6 +153,59 @@ namespace SurfingWin.Tray
             items.Add(id, item); Menu.Items.Add(item); return item;
         }
         internal ToolStripMenuItem Item(string id) { return items[id]; }
+        internal void ScheduleControlCenter(Point point)
+        {
+            if (closing || (DateTime.UtcNow - lastDoubleClick).TotalMilliseconds < SystemInformation.DoubleClickTime) return;
+            clickClosesCenter = center != null && (center.IsVisible || center.JustLostFocus);
+            clickPoint = point; clickTimer.Stop(); clickTimer.Start();
+        }
+        private void CancelPendingClick() { if (clickTimer != null) clickTimer.Stop(); }
+        internal void HandleDoubleClick()
+        {
+            lastDoubleClick = DateTime.UtcNow; CancelPendingClick();
+            if (center != null) center.Dismiss();
+            if (state.Status == CoreStatus.Ready) Open("panel");
+        }
+        private void ToggleControlCenter(Point point)
+        {
+            if (center != null && center.IsVisible) { center.Dismiss(); return; }
+            ShowControlCenter(point, true);
+        }
+        internal void ShowControlCenter(Point point, bool animate)
+        {
+            if (closing) return;
+            try
+            {
+                if (center == null)
+                {
+                    center = new FluentControlCenter();
+                    center.ActionRequested += async delegate(string action)
+                    {
+                        if (action == "start" || action == "stop" || action == "restart") await ExecuteAsync(action, false);
+                        else Open(action);
+                    };
+                    center.ModeRequested += async delegate(string mode) { await ChangeModeAsync(mode); };
+                    center.MenuRequested += delegate(Point anchor) { center.Dismiss(); Menu.Show(anchor); };
+                }
+                center.Render(state, busy, null, operationError);
+                center.ShowAt(point, animate);
+            }
+            catch (Exception error) { ShowError(error); }
+        }
+        private void ApplyMenuTheme()
+        {
+            var renderer = new FluentMenuRenderer(FluentControlCenter.SystemUsesDarkTheme());
+            Menu.Renderer = renderer; Menu.BackColor = renderer.Background; Menu.ForeColor = renderer.Foreground;
+            foreach (var item in items.Values)
+            {
+                item.Padding = new Padding(10, 7, 10, 7);
+                if (item.HasDropDownItems)
+                {
+                    item.DropDown.Renderer = renderer; item.DropDown.BackColor = renderer.Background;
+                    item.DropDown.ForeColor = renderer.Foreground; item.DropDown.Font = menuFont;
+                }
+            }
+        }
         internal static string ModeName(string mode)
         { return mode == "rule" ? "规则" : mode == "global" ? "全局" : mode == "direct" ? "直连" : "—"; }
 
@@ -170,6 +245,7 @@ namespace SurfingWin.Tray
             string tooltip = "SurfingWin · " + detail;
             if (state.Status == CoreStatus.Ready) tooltip += " | " + state.Version + " | " + ModeName(state.Mode);
             icon.Text = tooltip.Length > 63 ? tooltip.Substring(0, 63) : tooltip;
+            if (center != null) center.Render(state, busy, operation, operationError);
         }
 
         private async Task ExecuteAsync(string action, bool exitAfter)
@@ -178,6 +254,7 @@ namespace SurfingWin.Tray
             while (refreshing && !closing) await Task.Delay(25);
             if (closing || busy) return;
             busy = true;
+            operationError = null;
             Render(action == "start" ? "正在启动…" : action == "stop" ? "正在停止…" : "正在重启…");
             bool success = false;
             try
@@ -199,7 +276,7 @@ namespace SurfingWin.Tray
             if (closing || busy) return;
             while (refreshing && !closing) await Task.Delay(25);
             if (closing || busy || state.Status != CoreStatus.Ready) return;
-            busy = true; Render("正在切换模式…");
+            busy = true; operationError = null; Render("正在切换模式…");
             try { await backend.ChangeModeAsync(mode); }
             catch (Exception e) { ShowError(e); }
             finally { busy = false; }
@@ -216,7 +293,9 @@ namespace SurfingWin.Tray
             backend.ReportError(error);
             errorTip = true;
             string message = error is TrayException ? error.Message : "操作失败，请打开日志目录查看详细信息。";
+            operationError = message;
             icon.ShowBalloonTip(8000, "SurfingWin", message + " 点击此通知可打开日志目录。", ToolTipIcon.Warning);
+            if (center != null) center.Render(state, busy, null, operationError);
         }
 
         protected override void ExitThreadCore()
@@ -224,9 +303,11 @@ namespace SurfingWin.Tray
             if (closing) return;
             closing = true;
             timer.Stop();
+            clickTimer.Stop(); clickTimer.Dispose();
+            if (center != null) { center.Dispose(); center = null; }
             icon.Visible = false;
             icon.Dispose();
-            timer.Dispose(); Menu.Dispose();
+            timer.Dispose(); Menu.Dispose(); menuFont.Dispose();
             readyIcon.Dispose(); stoppedIcon.Dispose(); warningIcon.Dispose();
             base.ExitThreadCore();
         }

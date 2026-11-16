@@ -28,6 +28,7 @@ class ReleasePackagingTests(unittest.TestCase):
             "bin/SurfingTray.exe": "tray binary fixture\n",
             "src/tray/TrayCore.cs": "// tray core source\n",
             "src/tray/TrayApplication.cs": "// tray UI source\n",
+            "src/tray/FluentControlCenter.cs": "// Fluent control center source\n",
             "src/tray/SurfingTray.manifest": "<assembly/>\n",
             "src/tray/SurfingTray.ico": "tray icon fixture\n",
             "config/config.yaml": "url: subscription-placeholder\n",
