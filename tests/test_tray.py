@@ -121,7 +121,11 @@ class TrayTests(unittest.TestCase):
                 self.assertTrue(record.exists(), "Launcher did not execute the harmless stub")
                 data = json.loads(record.read_text(encoding="utf-8-sig"))
                 self.assertEqual(data["arguments"], expected)
-                self.assertEqual(data["cwd"].casefold().rstrip("\\"), windows_path(fixture).casefold().rstrip("\\"))
+                actual_cwd = data["cwd"] if os.name == "nt" else subprocess.check_output(
+                    [WSLPATH, "-u", data["cwd"]], text=True,
+                ).strip()
+                self.assertTrue(os.path.samefile(actual_cwd, fixture),
+                                "Launcher used a different working directory: " + data["cwd"])
 
     def test_real_mihomo_loopback_only_without_tun(self):
         harness = self.folder / "TrayHarness.exe"
